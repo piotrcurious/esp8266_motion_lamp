@@ -53,6 +53,7 @@ public:
     String(int n) : std::string(std::to_string(n)) {}
     String(unsigned int n) : std::string(std::to_string(n)) {}
     String(long n) : std::string(std::to_string(n)) {}
+    String(unsigned long n) : std::string(std::to_string(n)) {}
     String(float f) : std::string(std::to_string(f)) {}
     String(double f) : std::string(std::to_string(f)) {}
 
@@ -142,6 +143,7 @@ public:
     void restart() {
         std::cout << "[ESP] restart called" << std::endl;
     }
+    unsigned long getFreeHeap() { return 40000; }
 };
 extern ESPMock ESP;
 
