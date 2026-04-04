@@ -3,11 +3,14 @@
 #include <ESP8266WebServer.h>
 
 // Define the pins for the motion sensor, the LED, and the analog input
-#define D0 0
-#define D1 1
-#define MOTION_PIN D0 // The pin that can wake up esp8266 from deep sleep
-#define LED_PIN D1 // The pin that controls the LED brightness
+#define D0 16
+#define D1 5
+#define D2 4
+#define D3 0
+#define MOTION_PIN D0 // The pin that can wake up esp8266 from deep sleep (XPD_DCDC to RST)
+#define LED_PIN D1    // The pin that controls the LED brightness
 #define ANALOG_PIN A0 // The pin that measures the battery voltage
+#define CONFIG_PIN D3 // Pin to force config mode during boot (e.g., Flash button on many boards)
 
 // Define the number of envelopes, steps, and voltage set points
 #define NUM_ENVELOPES 5 // The number of battery voltage levels
@@ -135,14 +138,15 @@ void handleRoot() {
   response += "h1{color:#0ff;text-shadow:0 0 10px #0aa;}";
   response += "h3{color:#f0f;border-bottom:1px solid #f0f;}";
   response += ".dash{border:2px solid #0ff;padding:10px;margin-bottom:20px;background:#001;}";
-  response += "</style></head><body><h1>> MOTION_LAMP_OS v1.2</h1>";
+  response += "</style></head><body><h1>> MOTION_LAMP_OS v1.3</h1>";
 
   response += "<div class='dash'><h3>[SYSTEM_DASHBOARD]</h3>";
   response += "BATTERY_VOLTAGE: " + String(v) + "V<br>";
   #ifndef MOCK_ARDUINO
   response += "FREE_HEAP: " + String(ESP.getFreeHeap()) + " bytes<br>";
   #endif
-  response += "UPTIME: " + String(millis()/1000) + "s</div>";
+  response += "UPTIME: " + String(millis()/1000) + "s<br>";
+  response += "FORCE_CONFIG_PIN: GPIO" + String(CONFIG_PIN) + "</div>";
 
   response += "<form method='post' action='/config'>";
   response += "<table><tr><th>Env</th><th>Min V</th><th>Max V</th><th>Loop Pt</th><th>Brightness Profile</th><th>Test</th></tr>";
@@ -230,9 +234,6 @@ void runEnvelope(int envIdx) {
          }
        }
        if (!motionNow) motionWasHigh = false;
-       if (!test_mode_active) {
-          // Yield to system if not in config mode (though in config mode we handleClient)
-       }
        #ifndef MOCK_ARDUINO
        server.handleClient(); // Keep server responsive during test or config
        #endif
@@ -251,12 +252,14 @@ void setup() {
   else loadFromEEPROM();
 
   pinMode(MOTION_PIN, INPUT);
+  pinMode(CONFIG_PIN, INPUT_PULLUP);
 
-  // Check for configuration mode entry: hold motion pin HIGH for 5 seconds during boot
+  // Check for configuration mode entry: hold CONFIG_PIN LOW for 5 seconds during boot
+  // Using active-low since it's common for buttons with internal pull-up
   bool forceConfig = true;
   unsigned long bootCheckStart = millis();
   while (millis() - bootCheckStart < 5000) {
-    if (digitalRead(MOTION_PIN) == LOW) {
+    if (digitalRead(CONFIG_PIN) == HIGH) { // Button released
       forceConfig = false;
       break;
     }
