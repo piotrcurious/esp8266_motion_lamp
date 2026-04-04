@@ -15,6 +15,7 @@
 
 // Define the configuration mode flag and timeout
 #define CONFIG_MODE_FLAG 0x55 // The flag value to indicate configuration mode
+#define INIT_DONE_FLAG 0xAA // Flag to check if defaults are loaded
 #ifndef MOCK_ARDUINO
 #define CONFIG_MODE_TIMEOUT 30000 // The timeout value for configuration mode in milliseconds
 #else
@@ -38,6 +39,83 @@ ESP8266WebServer server(80);
 #else
 extern ESP8266WebServer server;
 #endif
+
+void saveToEEPROM() {
+  int addr = 2; // addr 0 is config_mode, addr 1 is init_done
+  for (int i = 0; i < NUM_ENVELOPES; i++) {
+    for (int j = 0; j < NUM_STEPS; j++) {
+      EEPROM.write(addr++, envelopes[i][j].brightness);
+      EEPROM.write(addr++, envelopes[i][j].duration >> 8);
+      EEPROM.write(addr++, envelopes[i][j].duration & 0xFF);
+    }
+    byte high_vmin = (int)(v_ranges[i][0] * 100) >> 8;
+    byte low_vmin = (int)(v_ranges[i][0] * 100) & 0xFF;
+    EEPROM.write(addr++, high_vmin);
+    EEPROM.write(addr++, low_vmin);
+    byte high_vmax = (int)(v_ranges[i][1] * 100) >> 8;
+    byte low_vmax = (int)(v_ranges[i][1] * 100) & 0xFF;
+    EEPROM.write(addr++, high_vmax);
+    EEPROM.write(addr++, low_vmax);
+    EEPROM.write(addr++, (byte)loop_points[i]);
+  }
+  EEPROM.commit();
+}
+
+void loadFromEEPROM() {
+  int addr = 2;
+  for (int i = 0; i < NUM_ENVELOPES; i++) {
+    for (int j = 0; j < NUM_STEPS; j++) {
+      envelopes[i][j].brightness = EEPROM.read(addr++);
+      envelopes[i][j].duration = (EEPROM.read(addr++) << 8) | EEPROM.read(addr++);
+    }
+    v_ranges[i][0] = (float)((EEPROM.read(addr++) << 8) | EEPROM.read(addr++)) / 100.0;
+    v_ranges[i][1] = (float)((EEPROM.read(addr++) << 8) | EEPROM.read(addr++)) / 100.0;
+    loop_points[i] = (int)EEPROM.read(addr++);
+  }
+}
+
+void loadDefaults() {
+  // Clear all
+  memset(envelopes, 0, sizeof(envelopes));
+
+  // Env 0: smooth fade
+  for (int i = 0; i < 10; i++) {
+    envelopes[0][i] = {(byte)((i+1)*25), 100};
+  }
+  envelopes[0][10] = {255, 5000};
+  for (int i = 0; i < 10; i++) {
+    envelopes[0][11+i] = {(byte)(255 - (i+1)*25), 100};
+  }
+  v_ranges[0][0] = 4.0; v_ranges[0][1] = 5.0; loop_points[0] = 10;
+
+  // Env 1: pulse
+  for (int p = 0; p < 3; p++) {
+    for (int i = 0; i < 5; i++) envelopes[1][p*10 + i] = {(byte)((i+1)*51), 100};
+    for (int i = 0; i < 5; i++) envelopes[1][p*10 + 5 + i] = {(byte)(255 - (i+1)*51), 100};
+  }
+  v_ranges[1][0] = 3.7; v_ranges[1][1] = 4.0; loop_points[1] = 0;
+
+  // Env 2: strobe
+  for (int i = 0; i < 10; i++) {
+    envelopes[2][i*4] = {255, 100}; envelopes[2][i*4+1] = {0, 100};
+    envelopes[2][i*4+2] = {255, 100}; envelopes[2][i*4+3] = {0, 700};
+  }
+  v_ranges[2][0] = 3.4; v_ranges[2][1] = 3.7; loop_points[2] = 0;
+
+  // Env 3: night light
+  envelopes[3][0] = {32, 30000};
+  v_ranges[3][0] = 3.2; v_ranges[3][1] = 3.4; loop_points[3] = 0;
+
+  // Env 4: rapid
+  for (int i = 0; i < 30; i++) {
+    envelopes[4][i*2] = {255, 200}; envelopes[4][i*2+1] = {0, 200};
+  }
+  v_ranges[4][0] = 0.0; v_ranges[4][1] = 3.2; loop_points[4] = 0;
+
+  saveToEEPROM();
+  EEPROM.write(1, INIT_DONE_FLAG);
+  EEPROM.commit();
+}
 
 void handleRoot() {
   String response = "<html><head><title>ESP8266 Motion Sensor Lamp Configuration</title></head><body><h1>ESP8266 Motion Sensor Lamp Configuration</h1><form method=\"post\" action=\"/config\"><table border=\"1\"><tr><th>Env</th><th>Min V</th><th>Max V</th><th>Loop Point</th></tr>";
@@ -84,26 +162,7 @@ void handleConfig() {
       }
     }
   }
-
-  // Save to EEPROM
-  int addr = 1;
-  for (int i = 0; i < NUM_ENVELOPES; i++) {
-    for (int j = 0; j < NUM_STEPS; j++) {
-      EEPROM.write(addr++, envelopes[i][j].brightness);
-      EEPROM.write(addr++, envelopes[i][j].duration >> 8);
-      EEPROM.write(addr++, envelopes[i][j].duration & 0xFF);
-    }
-    byte high_vmin = (int)(v_ranges[i][0] * 100) >> 8;
-    byte low_vmin = (int)(v_ranges[i][0] * 100) & 0xFF;
-    EEPROM.write(addr++, high_vmin);
-    EEPROM.write(addr++, low_vmin);
-    byte high_vmax = (int)(v_ranges[i][1] * 100) >> 8;
-    byte low_vmax = (int)(v_ranges[i][1] * 100) & 0xFF;
-    EEPROM.write(addr++, high_vmax);
-    EEPROM.write(addr++, low_vmax);
-    EEPROM.write(addr++, (byte)loop_points[i]);
-  }
-  EEPROM.commit();
+  saveToEEPROM();
   server.send(200, "text/html", "Configuration saved. Please <a href=\"/restart\">restart</a>.");
 }
 
@@ -116,24 +175,19 @@ void handleRestart() {
 void setup() {
   Serial.begin(9600);
   EEPROM.begin(1024);
+
+  if (EEPROM.read(1) != INIT_DONE_FLAG) {
+    loadDefaults();
+  } else {
+    loadFromEEPROM();
+  }
+
   config_mode_flag = EEPROM.read(0);
 
   if (config_mode_flag == CONFIG_MODE_FLAG) {
     Serial.println("Config mode");
     EEPROM.write(0, 0);
     EEPROM.commit();
-
-    // Load existing config to RAM for editing
-    int addr = 1;
-    for (int i = 0; i < NUM_ENVELOPES; i++) {
-      for (int j = 0; j < NUM_STEPS; j++) {
-        envelopes[i][j].brightness = EEPROM.read(addr++);
-        envelopes[i][j].duration = (EEPROM.read(addr++) << 8) | EEPROM.read(addr++);
-      }
-      v_ranges[i][0] = (float)((EEPROM.read(addr++) << 8) | EEPROM.read(addr++)) / 100.0;
-      v_ranges[i][1] = (float)((EEPROM.read(addr++) << 8) | EEPROM.read(addr++)) / 100.0;
-      loop_points[i] = (int)EEPROM.read(addr++);
-    }
 
     pinMode(MOTION_PIN, INPUT);
     server.on("/", handleRoot);
@@ -154,17 +208,6 @@ void setup() {
     ESP.deepSleep(0);
   } else {
     Serial.println("Normal mode");
-    int addr = 1;
-    for (int i = 0; i < NUM_ENVELOPES; i++) {
-      for (int j = 0; j < NUM_STEPS; j++) {
-        envelopes[i][j].brightness = EEPROM.read(addr++);
-        envelopes[i][j].duration = (EEPROM.read(addr++) << 8) | EEPROM.read(addr++);
-      }
-      v_ranges[i][0] = (float)((EEPROM.read(addr++) << 8) | EEPROM.read(addr++)) / 100.0;
-      v_ranges[i][1] = (float)((EEPROM.read(addr++) << 8) | EEPROM.read(addr++)) / 100.0;
-      loop_points[i] = (int)EEPROM.read(addr++);
-    }
-
     pinMode(MOTION_PIN, INPUT);
     pinMode(LED_PIN, OUTPUT);
 
@@ -191,6 +234,10 @@ void setup() {
                }
              }
              yield();
+          }
+          #else
+          if (digitalRead(MOTION_PIN) == HIGH && loop_points[envIdx] != -1) {
+              // Simulating re-trigger logic for mock
           }
           #endif
           if (envelopes[envIdx][j].brightness == 0 && j > 0) break;
