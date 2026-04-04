@@ -16,22 +16,20 @@ int main() {
     // First run: Set config mode flag in EEPROM
     std::cout << "--- Phase 1: Configuration ---" << std::endl;
     EEPROM.write(0, 0x55);
+
     setup(); // This should enter config mode
 
     // Simulate saving some config
-    server.setArg("v00", "3.0");
-    server.setArg("v01", "4.5");
-    server.setArg("v02", "10"); // looping point
-    server.setArg("b00", "255");
-    server.setArg("b01", "128");
-    server.setArg("b02", "0");
+    server.setArg("vmin0", "3.0");
+    server.setArg("vmax0", "4.5");
+    server.setArg("lp0", "1");
+    server.setArg("steps0", "255,1000;128,500;0,0");
     server.trigger("/config");
 
     // Phase 2: Normal mode
     std::cout << "--- Phase 2: Normal Mode ---" << std::endl;
-    // EEPROM flag was cleared by setup
-    setAnalogRead(A0, 600); // ~3.8V
-    digitalWrite(0, 1); // MOTION_PIN = HIGH
+    setAnalogRead(A0, 600); // (600*3.3/1024)*2 = 3.86V
+    digitalWrite(0, 1); // MOTION_PIN = HIGH (triggered)
     setup();
 
     std::cout << "Test completed" << std::endl;

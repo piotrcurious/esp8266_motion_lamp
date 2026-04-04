@@ -7,9 +7,9 @@
 #include "Arduino.h"
 
 class EEPROMMock {
-    uint8_t data[512];
+    uint8_t data[1024];
 public:
-    EEPROMMock() { memset(data, 0, 512); }
+    EEPROMMock() { memset(data, 0, 1024); }
     void begin(int size) { }
     uint8_t read(int addr) { return data[addr]; }
     void write(int addr, uint8_t val) { data[addr] = val; }
@@ -37,7 +37,5 @@ public:
     void setArg(String name, String value) { args[name] = value; }
     void trigger(const char* path) { if (handlers.count(path)) handlers[path](); }
 };
-
-extern ESP8266WebServer server;
 
 #endif
