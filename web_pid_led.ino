@@ -1,3 +1,7 @@
+#include <Arduino.h>
+#include <EEPROM.h>
+#include <ESP8266WebServer.h>
+
 // Define the pins for the motion sensor, the LED, and the analog input
 #define D0 0
 #define D1 1
@@ -5,207 +9,197 @@
 #define LED_PIN D1 // The pin that controls the LED brightness
 #define ANALOG_PIN A0 // The pin that measures the battery voltage
 
-// Define the number of envelopes, steps, and set points
+// Define the number of envelopes, steps, and voltage set points
 #define NUM_ENVELOPES 5 // The number of battery voltage levels
 #define NUM_STEPS 60 // The number of steps in each envelope
-#define NUM_SET_POINTS 5 // The number of set points for each envelope
 
 // Define the configuration mode flag and timeout
 #define CONFIG_MODE_FLAG 0x55 // The flag value to indicate configuration mode
-
 #ifndef MOCK_ARDUINO
-#define CONFIG_MODE_TIMEOUT 30000
+#define CONFIG_MODE_TIMEOUT 30000 // The timeout value for configuration mode in milliseconds
 #else
 #define CONFIG_MODE_TIMEOUT 10
 #endif
 
-// Define the web server port and the HTML page content
-#define WEB_SERVER_PORT 80 // The port for the web server
-#define HTML_PAGE "<html><head><title>ESP8266 Motion Sensor Lamp Configuration</title></head><body><h1>ESP8266 Motion Sensor Lamp Configuration</h1><form method=\"post\" action=\"/config\"><table border=\"1\"><tr><th>Envelope</th><th>Set Point</th><th>Battery Voltage (V)</th><th>LED Brightness (0-1023)</th></tr>" // The HTML page content before the table data
+// Structure for each step in RAM
+struct Step {
+  byte brightness; // 0-255
+  unsigned int duration; // ms
+};
 
-// Declare the global variables for the envelopes, set points, and configuration mode flag
-int envelopes[NUM_ENVELOPES][NUM_STEPS]; // The array to store the envelopes data
-float set_points[NUM_ENVELOPES][NUM_SET_POINTS]; // The array to store the set points data
-byte config_mode_flag; // The variable to store the configuration mode flag
-
-// Declare the EEPROM library and the web server object
-#include <EEPROM.h>
-#include <ESP8266WebServer.h>
+// Global variables
+Step envelopes[NUM_ENVELOPES][NUM_STEPS];
+float v_ranges[NUM_ENVELOPES][2]; // [min_v, max_v]
+int loop_points[NUM_ENVELOPES];
+byte config_mode_flag;
 
 #ifndef MOCK_ARDUINO
-ESP8266WebServer server(WEB_SERVER_PORT);
+ESP8266WebServer server(80);
 #else
 extern ESP8266WebServer server;
 #endif
 
-// The function to handle GET requests for the root path
 void handleRoot() {
-  // Send the HTML page content as the response
-  String response = HTML_PAGE; // Start with the HTML page content before the table data
+  String response = "<html><head><title>ESP8266 Motion Sensor Lamp Configuration</title></head><body><h1>ESP8266 Motion Sensor Lamp Configuration</h1><form method=\"post\" action=\"/config\"><table border=\"1\"><tr><th>Env</th><th>Min V</th><th>Max V</th><th>Loop Point</th></tr>";
+
   for (int i = 0; i < NUM_ENVELOPES; i++) {
-    for (int j = 0; j < NUM_SET_POINTS; j++) {
-      response += "<tr>"; // Start a new table row
-      response += "<td>" + String(i) + "</td>"; // Add the envelope number as the first column
-      response += "<td>" + String(j) + "</td>"; // Add the set point number as the second column
-      response += "<td><input type=\"text\" name=\"v" + String(i) + String(j) + "\" value=\"" + String(set_points[i][j]) + "\"></td>"; // Add an input field for the battery voltage as the third column
-      response += "<td><input type=\"text\" name=\"b" + String(i) + String(j) + "\" value=\"" + String(envelopes[i][j]) + "\"></td>"; // Add an input field for the LED brightness as the fourth column
-      response += "</tr>"; // End the table row
-    }
+    response += "<tr><td>" + String(i) + "</td>";
+    response += "<td><input type=\"text\" name=\"vmin" + String(i) + "\" value=\"" + String(v_ranges[i][0]) + "\"></td>";
+    response += "<td><input type=\"text\" name=\"vmax" + String(i) + "\" value=\"" + String(v_ranges[i][1]) + "\"></td>";
+    response += "<td><input type=\"text\" name=\"lp" + String(i) + "\" value=\"" + String(loop_points[i]) + "\"></td></tr>";
   }
-  response += "</table><input type=\"submit\" value=\"Save\"></form></body></html>"; // End the table and add a submit button to save the configuration
-  server.send(200, "text/html", response); // Send the response with status code 200 and content type text/html
+  response += "</table><p>Each envelope has 60 steps. Format: brightness,duration(ms);brightness,duration(ms);...</p>";
+  for (int i = 0; i < NUM_ENVELOPES; i++) {
+    response += "<h3>Envelope " + String(i) + " Steps</h3>";
+    response += "<textarea name=\"steps" + String(i) + "\" rows=\"4\" cols=\"100\">";
+    for (int j = 0; j < NUM_STEPS; j++) {
+      response += String(envelopes[i][j].brightness) + "," + String(envelopes[i][j].duration);
+      if (j < NUM_STEPS - 1) response += ";";
+    }
+    response += "</textarea>";
+  }
+  response += "<br><input type=\"submit\" value=\"Save\"></form></body></html>";
+  server.send(200, "text/html", response);
 }
 
-// The function to handle POST requests for the config path
 void handleConfig() {
-  // Parse and save the configuration data from the request parameters
   for (int i = 0; i < NUM_ENVELOPES; i++) {
-    for (int j = 0; j < NUM_SET_POINTS; j++) {
-      String v_name = String("v") + String(i) + String(j); // The name of the parameter for the battery voltage
-      String b_name = String("b") + String(i) + String(j); // The name of the parameter for the LED brightness
-      if (server.hasArg(v_name) && server.hasArg(b_name)) {
-        // The request has both parameters for this set point, parse and save them
-        float v_value = server.arg(v_name).toFloat(); // Parse the battery voltage value as a float
-        int b_value = server.arg(b_name).toInt(); // Parse the LED brightness value as an int
-        set_points[i][j] = v_value; // Save the battery voltage value to the set points array
-        envelopes[i][j] = b_value; // Save the LED brightness value to the envelopes array
-        byte high_byte = (int)(v_value * 100) >> 8; // Get the high byte of the battery voltage value multiplied by 100
-        byte low_byte = (int)(v_value * 100) & 0xFF; // Get the low byte of the battery voltage value multiplied by 100
-        EEPROM.write(1 + i * NUM_STEPS + j, (byte)b_value); // Write one byte per step to EEPROM
-        EEPROM.write(1 + NUM_ENVELOPES * NUM_STEPS + i * NUM_SET_POINTS * 2 + j * 2, high_byte); // Write one byte per high byte of set point to EEPROM
-        EEPROM.write(1 + NUM_ENVELOPES * NUM_STEPS + i * NUM_SET_POINTS * 2 + j * 2 + 1, low_byte); // Write one byte per low byte of set point to EEPROM
+    if (server.hasArg("vmin" + String(i))) v_ranges[i][0] = server.arg("vmin" + String(i)).toFloat();
+    if (server.hasArg("vmax" + String(i))) v_ranges[i][1] = server.arg("vmax" + String(i)).toFloat();
+    if (server.hasArg("lp" + String(i))) loop_points[i] = server.arg("lp" + String(i)).toInt();
+
+    if (server.hasArg("steps" + String(i))) {
+      String stepsStr = server.arg("steps" + String(i));
+      int start = 0;
+      for (int j = 0; j < NUM_STEPS; j++) {
+        int sep = stepsStr.indexOf(';', start);
+        String step = (sep == -1) ? stepsStr.substring(start) : stepsStr.substring(start, sep);
+        int comma = step.indexOf(',');
+        if (comma != -1) {
+          envelopes[i][j].brightness = step.substring(0, comma).toInt();
+          envelopes[i][j].duration = step.substring(comma + 1).toInt();
+        }
+        if (sep == -1) break;
+        start = sep + 1;
       }
     }
   }
-  EEPROM.commit(); // Commit the changes to EEPROM
-  Serial.println("Configuration saved"); // Print a message to the serial monitor
 
-  // Send a response with a link to restart the device
-  server.send(200, "text/html", "<html><head><title>ESP8266 Motion Sensor Lamp Configuration</title></head><body><h1>Configuration saved</h1><p>Please <a href=\"/restart\">restart</a> the device to apply the changes.</p></body></html>"); // Send the response with status code 200 and content type text/html
+  // Save to EEPROM
+  int addr = 1;
+  for (int i = 0; i < NUM_ENVELOPES; i++) {
+    for (int j = 0; j < NUM_STEPS; j++) {
+      EEPROM.write(addr++, envelopes[i][j].brightness);
+      EEPROM.write(addr++, envelopes[i][j].duration >> 8);
+      EEPROM.write(addr++, envelopes[i][j].duration & 0xFF);
+    }
+    byte high_vmin = (int)(v_ranges[i][0] * 100) >> 8;
+    byte low_vmin = (int)(v_ranges[i][0] * 100) & 0xFF;
+    EEPROM.write(addr++, high_vmin);
+    EEPROM.write(addr++, low_vmin);
+    byte high_vmax = (int)(v_ranges[i][1] * 100) >> 8;
+    byte low_vmax = (int)(v_ranges[i][1] * 100) & 0xFF;
+    EEPROM.write(addr++, high_vmax);
+    EEPROM.write(addr++, low_vmax);
+    EEPROM.write(addr++, (byte)loop_points[i]);
+  }
+  EEPROM.commit();
+  server.send(200, "text/html", "Configuration saved. Please <a href=\"/restart\">restart</a>.");
 }
 
-// The function to handle GET requests for the restart path
 void handleRestart() {
-  // Send a response with a message and restart the device
-  server.send(200, "text/html", "<html><head><title>ESP8266 Motion Sensor Lamp Configuration</title></head><body><h1>Restarting...</h1></body></html>"); // Send the response with status code 200 and content type text/html
-  Serial.println("Restarting..."); // Print a message to the serial monitor
-  delay(1000); // Wait for one second
-  ESP.restart(); // Restart the device
+  server.send(200, "text/html", "Restarting...");
+  delay(1000);
+  ESP.restart();
 }
 
-// The setup function runs once when the device starts or resets
 void setup() {
-  // Initialize the serial communication for debugging
   Serial.begin(9600);
-  
-  // Initialize the EEPROM library and read the configuration mode flag
-  EEPROM.begin(512);
+  EEPROM.begin(1024);
   config_mode_flag = EEPROM.read(0);
 
-  // Check if the configuration mode flag is set or not
   if (config_mode_flag == CONFIG_MODE_FLAG) {
-    // Enter the configuration mode and clear the flag
-    Serial.println("Entering configuration mode");
+    Serial.println("Config mode");
     EEPROM.write(0, 0);
     EEPROM.commit();
 
-    // Initialize the pins for the motion sensor and the LED
-    pinMode(MOTION_PIN, INPUT);
-    pinMode(LED_PIN, OUTPUT);
-    digitalWrite(LED_PIN, LOW);
-
-    // Initialize the web server and handle requests
-    server.on("/", handleRoot); // Handle GET requests for the root path
-    server.on("/config", handleConfig); // Handle POST requests for the config path
-    server.on("/restart", handleRestart);
-    server.begin();
-    Serial.println("Web server started");
-
-    // Wait for configuration mode timeout or motion detection
-    unsigned long start_time = millis();
-    while (millis() - start_time < CONFIG_MODE_TIMEOUT) {
-      server.handleClient(); // Handle any incoming requests from clients
-      if (digitalRead(MOTION_PIN) == HIGH) {
-        break; // Exit the loop if motion is detected
-      }
-    }
-
-    // Stop the web server and exit the configuration mode
-    server.stop();
-    Serial.println("Web server stopped");
-    Serial.println("Exiting configuration mode");
-  }
-  else {
-    // Enter the normal mode and read the envelopes and set points data from EEPROM
-    Serial.println("Entering normal mode");
+    // Load existing config to RAM for editing
+    int addr = 1;
     for (int i = 0; i < NUM_ENVELOPES; i++) {
       for (int j = 0; j < NUM_STEPS; j++) {
-        envelopes[i][j] = EEPROM.read(1 + i * NUM_STEPS + j); // Read one byte per step
+        envelopes[i][j].brightness = EEPROM.read(addr++);
+        envelopes[i][j].duration = (EEPROM.read(addr++) << 8) | EEPROM.read(addr++);
       }
-      for (int k = 0; k < NUM_SET_POINTS; k++) {
-        byte high_byte = EEPROM.read(1 + NUM_ENVELOPES * NUM_STEPS + i * NUM_SET_POINTS * 2 + k * 2); // Read one byte per high byte of set point
-        byte low_byte = EEPROM.read(1 + NUM_ENVELOPES * NUM_STEPS + i * NUM_SET_POINTS * 2 + k * 2 + 1); // Read one byte per low byte of set point
-        set_points[i][k] = (float)(high_byte << 8 | low_byte) / 100.0; // Combine two bytes and divide by 100 to get float value of set point
-      }
+      v_ranges[i][0] = (float)((EEPROM.read(addr++) << 8) | EEPROM.read(addr++)) / 100.0;
+      v_ranges[i][1] = (float)((EEPROM.read(addr++) << 8) | EEPROM.read(addr++)) / 100.0;
+      loop_points[i] = (int)EEPROM.read(addr++);
     }
 
-    // Initialize the pins for the motion sensor and the LED
+    pinMode(MOTION_PIN, INPUT);
+    server.on("/", handleRoot);
+    server.on("/config", handleConfig);
+    server.on("/restart", handleRestart);
+    server.begin();
+
+    unsigned long start = millis();
+    while (millis() - start < CONFIG_MODE_TIMEOUT) {
+      server.handleClient();
+      #ifndef MOCK_ARDUINO
+      if (digitalRead(MOTION_PIN) == HIGH) break;
+      #else
+      break;
+      #endif
+    }
+    server.stop();
+    ESP.deepSleep(0);
+  } else {
+    Serial.println("Normal mode");
+    int addr = 1;
+    for (int i = 0; i < NUM_ENVELOPES; i++) {
+      for (int j = 0; j < NUM_STEPS; j++) {
+        envelopes[i][j].brightness = EEPROM.read(addr++);
+        envelopes[i][j].duration = (EEPROM.read(addr++) << 8) | EEPROM.read(addr++);
+      }
+      v_ranges[i][0] = (float)((EEPROM.read(addr++) << 8) | EEPROM.read(addr++)) / 100.0;
+      v_ranges[i][1] = (float)((EEPROM.read(addr++) << 8) | EEPROM.read(addr++)) / 100.0;
+      loop_points[i] = (int)EEPROM.read(addr++);
+    }
+
     pinMode(MOTION_PIN, INPUT);
     pinMode(LED_PIN, OUTPUT);
 
-    // Check if motion is detected or not
     if (digitalRead(MOTION_PIN) == HIGH) {
-      // Execute the envelope based on the battery voltage level
-      Serial.println("Motion detected");
-      float battery_voltage = (float)analogRead(ANALOG_PIN) * 3.3 / 1024.0 * 2.0; // Calculate the battery voltage from the analog input value
-      Serial.print("Battery voltage: ");
-      Serial.println(battery_voltage);
-      int envelope_index = -1; // The index of the envelope to execute
+      float battery_v = (float)analogRead(ANALOG_PIN) * 3.3 / 1024.0 * 2.0;
+      int envIdx = -1;
       for (int i = 0; i < NUM_ENVELOPES; i++) {
-        if (battery_voltage >= set_points[i][0] && battery_voltage <= set_points[i][1]) {
-          // The battery voltage is within the range of this envelope
-          envelope_index = i;
+        if (battery_v >= v_ranges[i][0] && battery_v <= v_ranges[i][1]) {
+          envIdx = i;
           break;
         }
       }
-      if (envelope_index != -1) {
-        // Execute the envelope with the given index
-        Serial.print("Executing envelope ");
-        Serial.println(envelope_index);
+
+      if (envIdx != -1) {
         for (int j = 0; j < NUM_STEPS; j++) {
-          // Execute each step of the envelope
-          int led_brightness = envelopes[envelope_index][j]; // Get the LED brightness value for this step
-          analogWrite(LED_PIN, led_brightness); // Set the LED brightness
-
+          analogWrite(LED_PIN, envelopes[envIdx][j].brightness);
+          unsigned long stepStart = millis();
           #ifndef MOCK_ARDUINO
-          delay(100); // Delay for each step
-          #endif
-
-          if (digitalRead(MOTION_PIN) == HIGH) {
-            // Motion is detected again, loop back to the looping point of the envelope
-            j = (int)set_points[envelope_index][2] - 1; // Set the step index to the looping point minus one
+          while (millis() - stepStart < envelopes[envIdx][j].duration) {
+             if (digitalRead(MOTION_PIN) == HIGH) {
+               if (loop_points[envIdx] != -1) {
+                 j = loop_points[envIdx] - 1;
+                 break;
+               }
+             }
+             yield();
           }
-          if (led_brightness == 0 && j > 0) break; // End of envelope
+          #endif
+          if (envelopes[envIdx][j].brightness == 0 && j > 0) break;
         }
       }
-      else {
-        // No envelope matches the battery voltage level, do nothing
-        Serial.println("No envelope matches the battery voltage level");
-      }
     }
-    else {
-      // No motion is detected, do nothing
-      Serial.println("No motion detected");
-    }
-
-    // Turn off the LED and enter deep sleep mode until motion is detected again
     digitalWrite(LED_PIN, LOW);
     ESP.deepSleep(0);
-    Serial.println("Entering deep sleep mode");
   }
 }
 
-// The loop function runs repeatedly after the setup function finishes
-void loop() {
-  // Do nothing in the loop function
-}
+void loop() {}

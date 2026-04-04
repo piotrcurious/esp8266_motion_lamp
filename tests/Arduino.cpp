@@ -17,7 +17,6 @@ static voidFuncPtr interrupts[256];
 void pinMode(uint8_t pin, uint8_t mode) { pin_modes[pin] = mode; }
 void digitalWrite(uint8_t pin, uint8_t val) {
     pin_values[pin] = val;
-    // std::cout << "[digitalWrite] pin " << (int)pin << " = " << (int)val << std::endl;
 }
 int digitalRead(uint8_t pin) { return pin_values[pin]; }
 int analogRead(uint8_t pin) { return analog_values[pin]; }
@@ -33,6 +32,9 @@ unsigned long millis() {
 }
 
 void delay(unsigned long ms) {
+}
+
+void yield() {
 }
 
 void attachInterrupt(uint8_t interruptNum, voidFuncPtr userFunc, int mode) {

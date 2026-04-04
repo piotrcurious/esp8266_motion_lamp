@@ -39,6 +39,7 @@ int analogRead(uint8_t pin);
 void analogWrite(uint8_t pin, int val);
 unsigned long millis();
 void delay(unsigned long ms);
+void yield();
 
 typedef void (*voidFuncPtr)(void);
 void attachInterrupt(uint8_t interruptNum, voidFuncPtr userFunc, int mode);
@@ -60,6 +61,14 @@ public:
     }
     int toInt() const {
         try { return std::stoi(*this); } catch(...) { return 0; }
+    }
+    int indexOf(char c, int start = 0) const {
+        size_t pos = find(c, start);
+        return (pos == std::string::npos) ? -1 : (int)pos;
+    }
+    String substring(int start, int end = -1) const {
+        if (end == -1) return String(substr(start));
+        return String(substr(start, end - start));
     }
 
     String operator+(const String& other) const {
