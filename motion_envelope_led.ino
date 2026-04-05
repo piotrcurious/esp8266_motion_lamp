@@ -124,7 +124,6 @@ void motionISR() {
 int getEnvelopeIndex() {
   int analogValue = analogRead(batteryPin);
   float voltage = analogValue * (5.0 / 1023.0);
-  
   if (voltage > 4.2) return 0;
   if (voltage > 3.9) return 1;
   if (voltage > 3.6) return 2;
@@ -134,10 +133,8 @@ int getEnvelopeIndex() {
 
 void executeStep(int envIdx, int stepIdx) {
   if (envIdx < 0 || envIdx >= numEnvelopes || stepIdx < 0 || stepIdx >= numSteps) return;
-
   Step s;
   memcpy_P(&s, &envelopes[envIdx].steps[stepIdx], sizeof(Step));
-
   analogWrite(ledPin, s.brightness);
   stepStartTime = millis();
   currentEnvelope = envIdx;
@@ -156,24 +153,18 @@ void loop() {
     if (currentEnvelope == -1) {
       executeStep(getEnvelopeIndex(), 0);
     } else {
-      int loopPoint = (int)pgm_read_word(&envelopes[currentEnvelope].loopPoint);
-      if (loopPoint != -1) {
-        executeStep(currentEnvelope, loopPoint);
-      }
+      int lp = (int)pgm_read_word(&envelopes[currentEnvelope].loopPoint);
+      if (lp != -1 && lp < numSteps) executeStep(currentEnvelope, lp);
     }
   }
 
   if (currentEnvelope != -1) {
     Step s;
     memcpy_P(&s, &envelopes[currentEnvelope].steps[currentStep], sizeof(Step));
-    
     if (s.duration == 0 || (millis() - stepStartTime >= s.duration)) {
       int nextStep = currentStep + 1;
       Step nextS;
-      if (nextStep < numSteps) {
-        memcpy_P(&nextS, &envelopes[currentEnvelope].steps[nextStep], sizeof(Step));
-      }
-
+      if (nextStep < numSteps) memcpy_P(&nextS, &envelopes[currentEnvelope].steps[nextStep], sizeof(Step));
       if (nextStep >= numSteps || (nextS.duration == 0 && nextS.brightness == 0)) {
         analogWrite(ledPin, 0);
         currentEnvelope = -1;
@@ -183,8 +174,5 @@ void loop() {
       }
     }
   }
-
-  if (currentEnvelope == -1) {
-    LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);
-  }
+  if (currentEnvelope == -1) LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);
 }

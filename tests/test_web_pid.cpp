@@ -13,23 +13,24 @@ extern ESP8266WebServer server;
 int main() {
     std::cout << "Starting Test for web_pid_led.ino" << std::endl;
 
-    std::cout << "--- Phase 1: Force Config via Button ---" << std::endl;
-    // Simulate CONFIG_PIN (D3=0) being held LOW
-    digitalWrite(0, 0);
+    std::cout << "--- Phase 1: Default Init ---" << std::endl;
+    // EEPROM is empty, setup should load defaults
     setup();
 
-    // Simulate saving some config
+    std::cout << "--- Phase 2: Update Config (SSID & V_MULT) ---" << std::endl;
+    // Re-run setup in config mode by setting flag
+    EEPROM.write(0, 0x55);
+    server.setArg("ssid", "NewSSID");
+    server.setArg("vmult", "3.14");
     server.setArg("vmin0", "3.0");
     server.setArg("vmax0", "4.5");
-    server.setArg("lp0", "1");
-    server.setArg("steps0", "255,1000;128,500;0,0");
+    server.setArg("steps0", "100,500; 200,1000");
+    setup();
     server.trigger("/config");
 
-    // Phase 2: Normal mode
-    std::cout << "--- Phase 2: Normal Mode ---" << std::endl;
-    digitalWrite(0, 1); // Release button
-    setAnalogRead(A0, 600); // 3.86V
-    digitalWrite(16, 1); // MOTION_PIN (D0=16) = HIGH
+    std::cout << "--- Phase 3: Normal Mode (Motion Trigger) ---" << std::endl;
+    setAnalogRead(A0, 500); // 500 * (3.3/1024) * 3.14 = 5.06V -> Env 0
+    digitalWrite(16, 1); // MOTION_PIN HIGH
     setup();
 
     std::cout << "Test completed" << std::endl;

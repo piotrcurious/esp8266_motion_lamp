@@ -9,6 +9,7 @@
 #include <string.h>
 #include <math.h>
 #include <string>
+#include <algorithm>
 
 typedef uint8_t byte;
 typedef bool boolean;
@@ -70,6 +71,10 @@ public:
     String substring(int start, int end = -1) const {
         if (end == -1) return String(substr(start));
         return String(substr(start, end - start));
+    }
+    void trim() {
+        erase(begin(), find_if(begin(), end(), [](unsigned char ch) { return !isspace(ch); }));
+        erase(find_if(rbegin(), rend(), [](unsigned char ch) { return !isspace(ch); }).base(), end());
     }
 
     String operator+(const String& other) const {
