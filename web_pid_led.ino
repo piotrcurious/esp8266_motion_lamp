@@ -4,14 +4,10 @@
 #include <ESP8266WebServer.h>
 
 // Define the pins
-#define D0 16
-#define D1 5
-#define D2 4
-#define D3 0
-#define MOTION_PIN D0
-#define LED_PIN D1
-#define ANALOG_PIN A0
-#define CONFIG_PIN D3
+#define PIR_PIN 16
+#define LED_PIN 5
+#define BATT_PIN A0
+#define CFG_PIN 0
 
 #define NUM_ENVELOPES 5
 #define NUM_STEPS 60
@@ -63,22 +59,27 @@ void loadDefaults() {
   strncpy(cfg.ssid, "MotionLampAP", 31);
   strncpy(cfg.pass, "12345678", 31);
   cfg.v_multiplier = 2.0;
+  // Env 0: smooth fade
   for (int i = 0; i < 10; i++) cfg.envelopes[0][i] = {(byte)((i+1)*25), 100};
   cfg.envelopes[0][10] = {255, 5000};
   for (int i = 0; i < 10; i++) cfg.envelopes[0][11+i] = {(byte)(255 - (i+1)*25), 100};
   cfg.v_ranges[0][0] = 4.0; cfg.v_ranges[0][1] = 5.0; cfg.loop_points[0] = 10;
+  // Env 1: pulse
   for (int p = 0; p < 3; p++) {
     for (int i = 0; i < 5; i++) cfg.envelopes[1][p*10 + i] = {(byte)((i+1)*51), 100};
     for (int i = 0; i < 5; i++) cfg.envelopes[1][p*10 + 5 + i] = {(byte)(255 - (i+1)*51), 100};
   }
   cfg.v_ranges[1][0] = 3.7; cfg.v_ranges[1][1] = 4.0; cfg.loop_points[1] = 0;
+  // Env 2: strobe
   for (int i = 0; i < 10; i++) {
     cfg.envelopes[2][i*4] = {255, 100}; cfg.envelopes[2][i*4+1] = {0, 100};
     cfg.envelopes[2][i*4+2] = {255, 100}; cfg.envelopes[2][i*4+3] = {0, 700};
   }
   cfg.v_ranges[2][0] = 3.4; cfg.v_ranges[2][1] = 3.7; cfg.loop_points[2] = 0;
+  // Env 3: night light
   cfg.envelopes[3][0] = {32, 30000};
   cfg.v_ranges[3][0] = 3.2; cfg.v_ranges[3][1] = 3.4; cfg.loop_points[3] = 0;
+  // Env 4: rapid alert
   for (int i = 0; i < 30; i++) {
     cfg.envelopes[4][i*2] = {255, 200}; cfg.envelopes[4][i*2+1] = {0, 200};
   }
@@ -105,7 +106,7 @@ String getVisual(int envIdx) {
 }
 
 void handleRoot() {
-  float v = (float)analogRead(ANALOG_PIN) * (3.3 / 1024.0) * cfg.v_multiplier;
+  float v = (float)analogRead(BATT_PIN) * (3.3 / 1024.0) * cfg.v_multiplier;
   String response = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><style>";
   response += "body{background:#111;color:#0f0;font-family:monospace;padding:20px;}";
   response += "table{border-collapse:collapse;width:100%;margin-bottom:20px;border:1px solid #444;}";
@@ -121,13 +122,14 @@ void handleRoot() {
   response += ".dash{border:2px solid #0ff;padding:10px;margin-bottom:20px;background:#001;}";
   response += ".kbd-help{color:#888;font-size:0.8em;margin-bottom:10px;}";
   response += "</style></head><body><h1>> MOTION_LAMP_OS v1.5</h1>";
-
   response += "<div class='dash'><h3>[SYSTEM_DASHBOARD]</h3>";
   response += "BATTERY: " + String(v) + "V<br>UPTIME: " + String((unsigned long)(millis()/1000)) + "s</div>";
-
   response += "<div class='kbd-help'>[KEYBOARD_EDIT_MODE]: Click a Brightness Profile. Use ARROWS to navigate & change brightness.</div>";
-
   response += "<form method='post' action='/config' id='cfgForm'>";
+  response += "<h3>[WIFI_AND_CALIBRATION]</h3>";
+  response += "SSID: <input type='text' name='ssid' value='" + String(cfg.ssid) + "' style='width:200px'> ";
+  response += "PASS: <input type='text' name='pass' value='" + String(cfg.pass) + "' style='width:200px'> ";
+  response += "V_MULT: <input type='text' name='vmult' value='" + String(cfg.v_multiplier) + "' style='width:100px'><br><br>";
   response += "<table><tr><th>Env</th><th>Min V</th><th>Max V</th><th>Loop Pt</th><th>Brightness Profile</th><th>Test</th></tr>";
   for (int i = 0; i < NUM_ENVELOPES; i++) {
     response += "<tr><td>" + String(i) + "</td>";
@@ -147,7 +149,6 @@ void handleRoot() {
     response += "</textarea>";
   }
   response += "<br><input type='submit' value='COMMIT_CHANGES_TO_ROM'></form>";
-
   response += "<script>";
   response += "let curEnv=-1, curStep=0;";
   response += "function focusEnv(e){ if(curEnv!=-1) clearSel(); curEnv=e; curStep=0; updateSel(); }";
@@ -218,7 +219,7 @@ void runEnvelope(int envIdx) {
     analogWrite(LED_PIN, cfg.envelopes[envIdx][j].brightness);
     unsigned long stepStart = millis();
     while (millis() - stepStart < cfg.envelopes[envIdx][j].duration) {
-       bool motionNow = (digitalRead(MOTION_PIN) == HIGH);
+       bool motionNow = (digitalRead(PIR_PIN) == HIGH);
        if (motionNow && !motionWasHigh) {
          if (cfg.loop_points[envIdx] != 0xFF && cfg.loop_points[envIdx] < NUM_STEPS) {
            j = cfg.loop_points[envIdx] - 1;
@@ -232,22 +233,24 @@ void runEnvelope(int envIdx) {
        #endif
        yield();
     }
-    if (cfg.envelopes[envIdx][j].brightness == 0 && j > 0) break;
+    int next = j + 1;
+    if (next >= NUM_STEPS || cfg.envelopes[envIdx][next].duration == 0) break;
   }
   analogWrite(LED_PIN, 0);
 }
 
 void setup() {
   Serial.begin(9600);
+  analogWriteRange(255);
   EEPROM.begin(sizeof(DeviceConfig) + 10);
   if (EEPROM.read(1) != INIT_DONE_FLAG) loadDefaults();
   else loadFromEEPROM();
-  pinMode(MOTION_PIN, INPUT);
-  pinMode(CONFIG_PIN, INPUT_PULLUP);
+  pinMode(PIR_PIN, INPUT);
+  pinMode(CFG_PIN, INPUT_PULLUP);
   bool forceConfig = true;
   unsigned long bootCheckStart = millis();
   while (millis() - bootCheckStart < 5000) {
-    if (digitalRead(CONFIG_PIN) == HIGH) {
+    if (digitalRead(CFG_PIN) == HIGH) {
       forceConfig = false;
       break;
     }
@@ -283,8 +286,8 @@ void setup() {
   } else {
     Serial.println("Normal mode");
     pinMode(LED_PIN, OUTPUT);
-    if (digitalRead(MOTION_PIN) == HIGH) {
-      float battery_v = (float)analogRead(ANALOG_PIN) * (3.3 / 1024.0) * cfg.v_multiplier;
+    if (digitalRead(PIR_PIN) == HIGH) {
+      float battery_v = (float)analogRead(BATT_PIN) * (3.3 / 1024.0) * cfg.v_multiplier;
       int envIdx = -1;
       for (int i = 0; i < NUM_ENVELOPES; i++) {
         if (battery_v >= cfg.v_ranges[i][0] && battery_v <= cfg.v_ranges[i][1]) {

@@ -1,14 +1,14 @@
 #include <Arduino.h>
 
-#define MOTION_PIN 2
+#define PIR_PIN 2
 #define LED_PIN 9
-#define BATTERY_PIN A0
+#define BATT_PIN A0
 
 #define NUM_ENVELOPES 5
 #define NUM_STEPS 60
 
-#define MIN_BATTERY_VALUE 600
-#define MAX_BATTERY_VALUE 900
+#define MIN_BATT_VAL 600
+#define MAX_BATT_VAL 900
 
 struct Step {
   byte brightness;
@@ -27,14 +27,7 @@ const Envelope envelopes[NUM_ENVELOPES] PROGMEM = {
       {153, 100}, {178, 100}, {204, 100}, {229, 100}, {255, 100},
       {255, 5000}, {229, 100}, {204, 100}, {178, 100}, {153, 100},
       {127, 100}, {102, 100}, {76, 100}, {51, 100}, {25, 100},
-      {0, 100}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}
+      {0, 100}, {0, 0}
     },
     10
   },
@@ -46,12 +39,7 @@ const Envelope envelopes[NUM_ENVELOPES] PROGMEM = {
       {204, 100}, {153, 100}, {102, 100}, {51, 100}, {0, 100},
       {51, 100}, {102, 100}, {153, 100}, {204, 100}, {255, 100},
       {204, 100}, {153, 100}, {102, 100}, {51, 100}, {0, 100},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}
+      {0, 0}
     },
     0
   },
@@ -65,27 +53,13 @@ const Envelope envelopes[NUM_ENVELOPES] PROGMEM = {
       {0, 100}, {255, 100}, {0, 700}, {255, 100}, {0, 100},
       {255, 100}, {0, 700}, {255, 100}, {0, 100}, {255, 100},
       {0, 700}, {255, 100}, {0, 100}, {255, 100}, {0, 700},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}
+      {0, 0}
     },
     0
   },
   {
     {
-      {32, 30000}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}
+      {32, 30000}, {0, 0}
     },
     0
   },
@@ -138,17 +112,17 @@ void executeStep(int envIdx, int stepIdx) {
 }
 
 void setup() {
-   pinMode(MOTION_PIN , INPUT_PULLUP);
+   pinMode(PIR_PIN , INPUT_PULLUP);
    pinMode(LED_PIN , OUTPUT);
-   pinMode(BATTERY_PIN , INPUT);
-   attachInterrupt(digitalPinToInterrupt(MOTION_PIN), motionISR , RISING);
+   pinMode(BATT_PIN , INPUT);
+   attachInterrupt(digitalPinToInterrupt(PIR_PIN), motionISR , RISING);
 }
 
 void loop() {
    if (motionDetected) {
       motionDetected = false;
-      int batteryValue = analogRead(BATTERY_PIN);
-      int envIdx = map(batteryValue , MIN_BATTERY_VALUE , MAX_BATTERY_VALUE , NUM_ENVELOPES-1 , 0);
+      int batteryValue = analogRead(BATT_PIN);
+      int envIdx = map(batteryValue , MIN_BATT_VAL , MAX_BATT_VAL , NUM_ENVELOPES-1 , 0);
       envIdx = constrain(envIdx, 0, NUM_ENVELOPES - 1);
       if (currentEnvelope == -1) {
          executeStep(envIdx, 0);
@@ -161,11 +135,15 @@ void loop() {
    if (currentEnvelope != -1) {
       Step s;
       memcpy_P(&s, &envelopes[currentEnvelope].steps[currentStepIdx], sizeof(Step));
-      if (s.duration == 0 || (millis() - stepStartTime >= s.duration)) {
+      if (millis() - stepStartTime >= s.duration) {
          int nextStep = currentStepIdx + 1;
          Step nextS;
-         if (nextStep < NUM_STEPS) memcpy_P(&nextS, &envelopes[currentEnvelope].steps[nextStep], sizeof(Step));
-         if (nextStep >= NUM_STEPS || (nextS.duration == 0 && nextS.brightness == 0)) {
+         bool hasNext = false;
+         if (nextStep < NUM_STEPS) {
+            memcpy_P(&nextS, &envelopes[currentEnvelope].steps[nextStep], sizeof(Step));
+            if (nextS.duration > 0) hasNext = true;
+         }
+         if (!hasNext) {
             analogWrite(LED_PIN, 0);
             currentEnvelope = -1;
             currentStepIdx = -1;

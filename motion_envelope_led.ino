@@ -1,28 +1,23 @@
 #include <Arduino.h>
 #include <LowPower.h>
 
-// Define the pins for the motion sensor and the LED
-const int motionPin = 2; // The pin that can wake up Arduino from deep sleep
-const int ledPin = 9; // The pin that controls the LED brightness
-const int batteryPin = A0; // The pin that measures the battery voltage
+const int motionPin = 2;
+const int ledPin = 9;
+const int batteryPin = A0;
 
-// Define the number of envelopes and steps per envelope
 const int numEnvelopes = 5;
 const int numSteps = 60;
 
-// Define the structure for each step
 struct Step {
-  byte brightness; // 0-255
-  unsigned int duration; // ms
+  byte brightness;
+  unsigned int duration;
 };
 
-// Define the structure for each envelope
 struct Envelope {
   Step steps[numSteps];
-  int loopPoint; // step index to go back to if another motion event is detected
+  int loopPoint;
 };
 
-// Define the envelope data in PROGMEM
 const Envelope envelopes[numEnvelopes] PROGMEM = {
   {
     {
@@ -30,14 +25,7 @@ const Envelope envelopes[numEnvelopes] PROGMEM = {
       {153, 100}, {178, 100}, {204, 100}, {229, 100}, {255, 100},
       {255, 5000}, {229, 100}, {204, 100}, {178, 100}, {153, 100},
       {127, 100}, {102, 100}, {76, 100}, {51, 100}, {25, 100},
-      {0, 100}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}
+      {0, 100}, {0, 0}
     },
     10
   },
@@ -49,12 +37,7 @@ const Envelope envelopes[numEnvelopes] PROGMEM = {
       {204, 100}, {153, 100}, {102, 100}, {51, 100}, {0, 100},
       {51, 100}, {102, 100}, {153, 100}, {204, 100}, {255, 100},
       {204, 100}, {153, 100}, {102, 100}, {51, 100}, {0, 100},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}
+      {0, 0}
     },
     0
   },
@@ -68,27 +51,13 @@ const Envelope envelopes[numEnvelopes] PROGMEM = {
       {0, 100}, {255, 100}, {0, 700}, {255, 100}, {0, 100},
       {255, 100}, {0, 700}, {255, 100}, {0, 100}, {255, 100},
       {0, 700}, {255, 100}, {0, 100}, {255, 100}, {0, 700},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}
+      {0, 0}
     },
     0
   },
   {
     {
-      {32, 30000}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
-      {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}
+      {32, 30000}, {0, 0}
     },
     0
   },
@@ -111,7 +80,6 @@ const Envelope envelopes[numEnvelopes] PROGMEM = {
   }
 };
 
-// Define global variables
 volatile bool motionDetected = false;
 int currentEnvelope = -1;
 int currentStep = -1;
@@ -161,11 +129,16 @@ void loop() {
   if (currentEnvelope != -1) {
     Step s;
     memcpy_P(&s, &envelopes[currentEnvelope].steps[currentStep], sizeof(Step));
-    if (s.duration == 0 || (millis() - stepStartTime >= s.duration)) {
+    if (millis() - stepStartTime >= s.duration) {
       int nextStep = currentStep + 1;
       Step nextS;
-      if (nextStep < numSteps) memcpy_P(&nextS, &envelopes[currentEnvelope].steps[nextStep], sizeof(Step));
-      if (nextStep >= numSteps || (nextS.duration == 0 && nextS.brightness == 0)) {
+      bool hasNext = false;
+      if (nextStep < numSteps) {
+        memcpy_P(&nextS, &envelopes[currentEnvelope].steps[nextStep], sizeof(Step));
+        if (nextS.duration > 0) hasNext = true;
+      }
+
+      if (!hasNext) {
         analogWrite(ledPin, 0);
         currentEnvelope = -1;
         currentStep = -1;

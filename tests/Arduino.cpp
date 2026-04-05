@@ -25,6 +25,7 @@ void analogWrite(uint8_t pin, int val) {
     analog_values[pin] = val;
     std::cout << "[analogWrite] pin " << (int)pin << " = " << val << std::endl;
 }
+void analogWriteRange(int range) {}
 
 static auto start_time = std::chrono::steady_clock::now();
 unsigned long millis() {
