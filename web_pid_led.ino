@@ -1,40 +1,44 @@
 #include <Arduino.h>
 #include <EEPROM.h>
+#include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 
-// Define the pins for the motion sensor, the LED, and the analog input
+// Define the pins
 #define D0 16
 #define D1 5
 #define D2 4
 #define D3 0
-#define MOTION_PIN D0 // The pin that can wake up esp8266 from deep sleep (XPD_DCDC to RST)
-#define LED_PIN D1    // The pin that controls the LED brightness
-#define ANALOG_PIN A0 // The pin that measures the battery voltage
-#define CONFIG_PIN D3 // Pin to force config mode during boot (e.g., Flash button on many boards)
+#define MOTION_PIN D0
+#define LED_PIN D1
+#define ANALOG_PIN A0
+#define CONFIG_PIN D3
 
-// Define the number of envelopes, steps, and voltage set points
-#define NUM_ENVELOPES 5 // The number of battery voltage levels
-#define NUM_STEPS 60 // The number of steps in each envelope
+#define NUM_ENVELOPES 5
+#define NUM_STEPS 60
 
-// Define the configuration mode flag and timeout
-#define CONFIG_MODE_FLAG 0x55 // The flag value to indicate configuration mode
-#define INIT_DONE_FLAG 0xAA // Flag to check if defaults are loaded
+#define CONFIG_MODE_FLAG 0x55
+#define INIT_DONE_FLAG 0xAB
 #ifndef MOCK_ARDUINO
-#define CONFIG_MODE_TIMEOUT 60000 // Extended timeout to 60s
+#define CONFIG_MODE_TIMEOUT 120000
 #else
 #define CONFIG_MODE_TIMEOUT 10
 #endif
 
-// Structure for each step in RAM
 struct Step {
-  byte brightness; // 0-255
-  unsigned int duration; // ms
+  byte brightness;
+  unsigned int duration;
 };
 
-// Global variables
-Step envelopes[NUM_ENVELOPES][NUM_STEPS];
-float v_ranges[NUM_ENVELOPES][2]; // [min_v, max_v]
-int loop_points[NUM_ENVELOPES];
+struct DeviceConfig {
+  char ssid[32];
+  char pass[32];
+  float v_multiplier;
+  float v_ranges[NUM_ENVELOPES][2];
+  byte loop_points[NUM_ENVELOPES];
+  Step envelopes[NUM_ENVELOPES][NUM_STEPS];
+};
+
+DeviceConfig cfg;
 byte config_mode_flag;
 bool test_mode_active = false;
 int test_env_idx = -1;
@@ -46,66 +50,39 @@ extern ESP8266WebServer server;
 #endif
 
 void saveToEEPROM() {
-  int addr = 2; // addr 0 is config_mode, addr 1 is init_done
-  for (int i = 0; i < NUM_ENVELOPES; i++) {
-    for (int j = 0; j < NUM_STEPS; j++) {
-      EEPROM.write(addr++, envelopes[i][j].brightness);
-      EEPROM.write(addr++, envelopes[i][j].duration >> 8);
-      EEPROM.write(addr++, envelopes[i][j].duration & 0xFF);
-    }
-    byte high_vmin = (int)(v_ranges[i][0] * 100) >> 8;
-    byte low_vmin = (int)(v_ranges[i][0] * 100) & 0xFF;
-    EEPROM.write(addr++, high_vmin);
-    EEPROM.write(addr++, low_vmin);
-    byte high_vmax = (int)(v_ranges[i][1] * 100) >> 8;
-    byte low_vmax = (int)(v_ranges[i][1] * 100) & 0xFF;
-    EEPROM.write(addr++, high_vmax);
-    EEPROM.write(addr++, low_vmax);
-    EEPROM.write(addr++, (byte)loop_points[i]);
-  }
+  EEPROM.put(2, cfg);
   EEPROM.commit();
 }
 
 void loadFromEEPROM() {
-  int addr = 2;
-  for (int i = 0; i < NUM_ENVELOPES; i++) {
-    for (int j = 0; j < NUM_STEPS; j++) {
-      envelopes[i][j].brightness = EEPROM.read(addr++);
-      envelopes[i][j].duration = (EEPROM.read(addr++) << 8) | EEPROM.read(addr++);
-    }
-    v_ranges[i][0] = (float)((EEPROM.read(addr++) << 8) | EEPROM.read(addr++)) / 100.0;
-    v_ranges[i][1] = (float)((EEPROM.read(addr++) << 8) | EEPROM.read(addr++)) / 100.0;
-    loop_points[i] = (int)EEPROM.read(addr++);
-  }
+  EEPROM.get(2, cfg);
 }
 
 void loadDefaults() {
-  memset(envelopes, 0, sizeof(envelopes));
-  // Env 0: smooth fade
-  for (int i = 0; i < 10; i++) envelopes[0][i] = {(byte)((i+1)*25), 100};
-  envelopes[0][10] = {255, 5000};
-  for (int i = 0; i < 10; i++) envelopes[0][11+i] = {(byte)(255 - (i+1)*25), 100};
-  v_ranges[0][0] = 4.0; v_ranges[0][1] = 5.0; loop_points[0] = 10;
-  // Env 1: pulse
+  memset(&cfg, 0, sizeof(cfg));
+  strncpy(cfg.ssid, "MotionLampAP", 31);
+  strncpy(cfg.pass, "12345678", 31);
+  cfg.v_multiplier = 2.0;
+  for (int i = 0; i < 10; i++) cfg.envelopes[0][i] = {(byte)((i+1)*25), 100};
+  cfg.envelopes[0][10] = {255, 5000};
+  for (int i = 0; i < 10; i++) cfg.envelopes[0][11+i] = {(byte)(255 - (i+1)*25), 100};
+  cfg.v_ranges[0][0] = 4.0; cfg.v_ranges[0][1] = 5.0; cfg.loop_points[0] = 10;
   for (int p = 0; p < 3; p++) {
-    for (int i = 0; i < 5; i++) envelopes[1][p*10 + i] = {(byte)((i+1)*51), 100};
-    for (int i = 0; i < 5; i++) envelopes[1][p*10 + 5 + i] = {(byte)(255 - (i+1)*51), 100};
+    for (int i = 0; i < 5; i++) cfg.envelopes[1][p*10 + i] = {(byte)((i+1)*51), 100};
+    for (int i = 0; i < 5; i++) cfg.envelopes[1][p*10 + 5 + i] = {(byte)(255 - (i+1)*51), 100};
   }
-  v_ranges[1][0] = 3.7; v_ranges[1][1] = 4.0; loop_points[1] = 0;
-  // Env 2: strobe
+  cfg.v_ranges[1][0] = 3.7; cfg.v_ranges[1][1] = 4.0; cfg.loop_points[1] = 0;
   for (int i = 0; i < 10; i++) {
-    envelopes[2][i*4] = {255, 100}; envelopes[2][i*4+1] = {0, 100};
-    envelopes[2][i*4+2] = {255, 100}; envelopes[2][i*4+3] = {0, 700};
+    cfg.envelopes[2][i*4] = {255, 100}; cfg.envelopes[2][i*4+1] = {0, 100};
+    cfg.envelopes[2][i*4+2] = {255, 100}; cfg.envelopes[2][i*4+3] = {0, 700};
   }
-  v_ranges[2][0] = 3.4; v_ranges[2][1] = 3.7; loop_points[2] = 0;
-  // Env 3: night light
-  envelopes[3][0] = {32, 30000};
-  v_ranges[3][0] = 3.2; v_ranges[3][1] = 3.4; loop_points[3] = 0;
-  // Env 4: rapid
+  cfg.v_ranges[2][0] = 3.4; cfg.v_ranges[2][1] = 3.7; cfg.loop_points[2] = 0;
+  cfg.envelopes[3][0] = {32, 30000};
+  cfg.v_ranges[3][0] = 3.2; cfg.v_ranges[3][1] = 3.4; cfg.loop_points[3] = 0;
   for (int i = 0; i < 30; i++) {
-    envelopes[4][i*2] = {255, 200}; envelopes[4][i*2+1] = {0, 200};
+    cfg.envelopes[4][i*2] = {255, 200}; cfg.envelopes[4][i*2+1] = {0, 200};
   }
-  v_ranges[4][0] = 0.0; v_ranges[4][1] = 3.2; loop_points[4] = 0;
+  cfg.v_ranges[4][0] = 0.0; cfg.v_ranges[4][1] = 3.2; cfg.loop_points[4] = 0;
   saveToEEPROM();
   EEPROM.write(1, INIT_DONE_FLAG);
   EEPROM.commit();
@@ -114,7 +91,7 @@ void loadDefaults() {
 String getVisual(int envIdx) {
   String visual = "";
   for (int j = 0; j < NUM_STEPS; j++) {
-    byte b = envelopes[envIdx][j].brightness;
+    byte b = cfg.envelopes[envIdx][j].brightness;
     if (b == 0) visual += ".";
     else if (b < 64) visual += "░";
     else if (b < 128) visual += "▒";
@@ -125,7 +102,7 @@ String getVisual(int envIdx) {
 }
 
 void handleRoot() {
-  float v = (float)analogRead(ANALOG_PIN) * 3.3 / 1024.0 * 2.0;
+  float v = (float)analogRead(ANALOG_PIN) * (3.3 / 1024.0) * cfg.v_multiplier;
   String response = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><style>";
   response += "body{background:#111;color:#0f0;font-family:monospace;padding:20px;}";
   response += "table{border-collapse:collapse;width:100%;margin-bottom:20px;border:1px solid #444;}";
@@ -138,60 +115,66 @@ void handleRoot() {
   response += "h1{color:#0ff;text-shadow:0 0 10px #0aa;}";
   response += "h3{color:#f0f;border-bottom:1px solid #f0f;}";
   response += ".dash{border:2px solid #0ff;padding:10px;margin-bottom:20px;background:#001;}";
-  response += "</style></head><body><h1>> MOTION_LAMP_OS v1.3</h1>";
-
+  response += "</style></head><body><h1>> MOTION_LAMP_OS v1.4</h1>";
   response += "<div class='dash'><h3>[SYSTEM_DASHBOARD]</h3>";
-  response += "BATTERY_VOLTAGE: " + String(v) + "V<br>";
+  response += "BATTERY: " + String(v) + "V (Mult: " + String(cfg.v_multiplier) + ")<br>";
   #ifndef MOCK_ARDUINO
   response += "FREE_HEAP: " + String(ESP.getFreeHeap()) + " bytes<br>";
+  response += "WIFI_SSID: " + String(cfg.ssid) + "<br>";
   #endif
-  response += "UPTIME: " + String(millis()/1000) + "s<br>";
+  response += "UPTIME: " + String((unsigned long)(millis()/1000)) + "s<br>";
   response += "FORCE_CONFIG_PIN: GPIO" + String(CONFIG_PIN) + "</div>";
-
   response += "<form method='post' action='/config'>";
+  response += "<h3>[WIFI_AND_CALIBRATION]</h3>";
+  response += "SSID: <input type='text' name='ssid' value='" + String(cfg.ssid) + "' style='width:200px'> ";
+  response += "PASS: <input type='text' name='pass' value='" + String(cfg.pass) + "' style='width:200px'> ";
+  response += "V_MULT: <input type='text' name='vmult' value='" + String(cfg.v_multiplier) + "' style='width:100px'><br><br>";
   response += "<table><tr><th>Env</th><th>Min V</th><th>Max V</th><th>Loop Pt</th><th>Brightness Profile</th><th>Test</th></tr>";
-
   for (int i = 0; i < NUM_ENVELOPES; i++) {
     response += "<tr><td>" + String(i) + "</td>";
-    response += "<td><input type='text' name='vmin" + String(i) + "' value='" + String(v_ranges[i][0]) + "'></td>";
-    response += "<td><input type='text' name='vmax" + String(i) + "' value='" + String(v_ranges[i][1]) + "'></td>";
-    response += "<td><input type='text' name='lp" + String(i) + "' value='" + String(loop_points[i]) + "'></td>";
+    response += "<td><input type='text' name='vmin" + String(i) + "' value='" + String(cfg.v_ranges[i][0]) + "'></td>";
+    response += "<td><input type='text' name='vmax" + String(i) + "' value='" + String(cfg.v_ranges[i][1]) + "'></td>";
+    response += "<td><input type='text' name='lp" + String(i) + "' value='" + String(cfg.loop_points[i]) + "'></td>";
     response += "<td><span id='vis" + String(i) + "' class='visual'>" + getVisual(i) + "</span></td>";
     response += "<td><button type='button' onclick=\"location.href='/test?env=" + String(i) + "'\">RUN</button></td></tr>";
   }
   response += "</table>";
-
   for (int i = 0; i < NUM_ENVELOPES; i++) {
     response += "<h3>[ENVELOPE_" + String(i) + "_DATA]</h3>";
     response += "<textarea name='steps" + String(i) + "' rows='3' oninput='updateVis(" + String(i) + ", this.value)'>";
     for (int j = 0; j < NUM_STEPS; j++) {
-      response += String(envelopes[i][j].brightness) + "," + String(envelopes[i][j].duration);
+      response += String(cfg.envelopes[i][j].brightness) + "," + String(cfg.envelopes[i][j].duration);
       if (j < NUM_STEPS - 1) response += ";";
     }
     response += "</textarea>";
   }
   response += "<br><input type='submit' value='COMMIT_CHANGES_TO_ROM'></form>";
-
-  response += "<script>function updateVis(idx, val){ let vis = ''; let steps = val.split(';'); steps.forEach(s => { let b = parseInt(s.split(',')[0]); if(isNaN(b) || b==0) vis+='.'; else if(b<64) vis+='░'; else if(b<128) vis+='▒'; else if(b<192) vis+='▓'; else vis+='█'; }); document.getElementById('vis'+idx).innerText = vis; }</script>";
+  response += "<script>function updateVis(idx, val){ let vis = ''; let steps = val.split(';'); steps.forEach(s => { let p = s.split(','); if(p.length<2) return; let b = parseInt(p[0]); if(isNaN(b) || b==0) vis+='.'; else if(b<64) vis+='░'; else if(b<128) vis+='▒'; else if(b<192) vis+='▓'; else vis+='█'; }); document.getElementById('vis'+idx).innerText = vis; }</script>";
   response += "</body></html>";
   server.send(200, "text/html", response);
 }
 
 void handleConfig() {
+  if (server.hasArg("ssid")) strncpy(cfg.ssid, server.arg("ssid").c_str(), 31);
+  if (server.hasArg("pass")) strncpy(cfg.pass, server.arg("pass").c_str(), 31);
+  if (server.hasArg("vmult")) cfg.v_multiplier = server.arg("vmult").toFloat();
   for (int i = 0; i < NUM_ENVELOPES; i++) {
-    if (server.hasArg("vmin" + String(i))) v_ranges[i][0] = server.arg("vmin" + String(i)).toFloat();
-    if (server.hasArg("vmax" + String(i))) v_ranges[i][1] = server.arg("vmax" + String(i)).toFloat();
-    if (server.hasArg("lp" + String(i))) loop_points[i] = server.arg("lp" + String(i)).toInt();
+    if (server.hasArg("vmin" + String(i))) cfg.v_ranges[i][0] = server.arg("vmin" + String(i)).toFloat();
+    if (server.hasArg("vmax" + String(i))) cfg.v_ranges[i][1] = server.arg("vmax" + String(i)).toFloat();
+    if (server.hasArg("lp" + String(i))) cfg.loop_points[i] = (byte)server.arg("lp" + String(i)).toInt();
     if (server.hasArg("steps" + String(i))) {
       String stepsStr = server.arg("steps" + String(i));
       int start = 0;
+      memset(cfg.envelopes[i], 0, sizeof(cfg.envelopes[i]));
       for (int j = 0; j < NUM_STEPS; j++) {
         int sep = stepsStr.indexOf(';', start);
         String step = (sep == -1) ? stepsStr.substring(start) : stepsStr.substring(start, sep);
+        step.trim();
+        if (step.length() == 0) continue;
         int comma = step.indexOf(',');
         if (comma != -1) {
-          envelopes[i][j].brightness = step.substring(0, comma).toInt();
-          envelopes[i][j].duration = step.substring(comma + 1).toInt();
+          cfg.envelopes[i][j].brightness = (byte)step.substring(0, comma).toInt();
+          cfg.envelopes[i][j].duration = (unsigned int)step.substring(comma + 1).toInt();
         }
         if (sep == -1) break;
         start = sep + 1;
@@ -222,74 +205,66 @@ void runEnvelope(int envIdx) {
   if (envIdx < 0 || envIdx >= NUM_ENVELOPES) return;
   bool motionWasHigh = false;
   for (int j = 0; j < NUM_STEPS; j++) {
-    analogWrite(LED_PIN, envelopes[envIdx][j].brightness);
+    analogWrite(LED_PIN, cfg.envelopes[envIdx][j].brightness);
     unsigned long stepStart = millis();
-    while (millis() - stepStart < envelopes[envIdx][j].duration) {
+    while (millis() - stepStart < cfg.envelopes[envIdx][j].duration) {
        bool motionNow = (digitalRead(MOTION_PIN) == HIGH);
-       if (motionNow && !motionWasHigh) { // Rising edge detected
-         if (loop_points[envIdx] != -1) {
-           j = loop_points[envIdx] - 1;
+       if (motionNow && !motionWasHigh) {
+         if (cfg.loop_points[envIdx] != 0xFF && cfg.loop_points[envIdx] < NUM_STEPS) {
+           j = cfg.loop_points[envIdx] - 1;
            motionWasHigh = true;
            break;
          }
        }
        if (!motionNow) motionWasHigh = false;
        #ifndef MOCK_ARDUINO
-       server.handleClient(); // Keep server responsive during test or config
+       server.handleClient();
        #endif
        yield();
     }
-    if (envelopes[envIdx][j].brightness == 0 && j > 0) break;
+    if (cfg.envelopes[envIdx][j].brightness == 0 && j > 0) break;
   }
   analogWrite(LED_PIN, 0);
 }
 
 void setup() {
   Serial.begin(9600);
-  EEPROM.begin(1024);
-
+  EEPROM.begin(sizeof(DeviceConfig) + 10);
   if (EEPROM.read(1) != INIT_DONE_FLAG) loadDefaults();
   else loadFromEEPROM();
-
   pinMode(MOTION_PIN, INPUT);
   pinMode(CONFIG_PIN, INPUT_PULLUP);
-
-  // Check for configuration mode entry: hold CONFIG_PIN LOW for 5 seconds during boot
-  // Using active-low since it's common for buttons with internal pull-up
   bool forceConfig = true;
   unsigned long bootCheckStart = millis();
   while (millis() - bootCheckStart < 5000) {
-    if (digitalRead(CONFIG_PIN) == HIGH) { // Button released
+    if (digitalRead(CONFIG_PIN) == HIGH) {
       forceConfig = false;
       break;
     }
     delay(10);
   }
-
   config_mode_flag = EEPROM.read(0);
-
   if (config_mode_flag == CONFIG_MODE_FLAG || forceConfig) {
     Serial.println("Config mode active");
     EEPROM.write(0, 0);
     EEPROM.commit();
     pinMode(LED_PIN, OUTPUT);
-    digitalWrite(LED_PIN, HIGH); // Signal config mode
-    delay(500);
-    digitalWrite(LED_PIN, LOW);
-
+    digitalWrite(LED_PIN, HIGH);
+    WiFi.softAP(cfg.ssid, cfg.pass);
+    Serial.print("AP IP: ");
+    Serial.println(WiFi.softAPIP());
     server.on("/", handleRoot);
     server.on("/config", handleConfig);
     server.on("/restart", handleRestart);
     server.on("/test", handleTest);
     server.begin();
-
     unsigned long configStart = millis();
     while (millis() - configStart < CONFIG_MODE_TIMEOUT || test_mode_active) {
       server.handleClient();
       if (test_mode_active) {
         runEnvelope(test_env_idx);
         test_mode_active = false;
-        configStart = millis(); // Reset timeout after test
+        configStart = millis();
       }
       yield();
     }
@@ -299,10 +274,10 @@ void setup() {
     Serial.println("Normal mode");
     pinMode(LED_PIN, OUTPUT);
     if (digitalRead(MOTION_PIN) == HIGH) {
-      float battery_v = (float)analogRead(ANALOG_PIN) * 3.3 / 1024.0 * 2.0;
+      float battery_v = (float)analogRead(ANALOG_PIN) * (3.3 / 1024.0) * cfg.v_multiplier;
       int envIdx = -1;
       for (int i = 0; i < NUM_ENVELOPES; i++) {
-        if (battery_v >= v_ranges[i][0] && battery_v <= v_ranges[i][1]) {
+        if (battery_v >= cfg.v_ranges[i][0] && battery_v <= cfg.v_ranges[i][1]) {
           envIdx = i;
           break;
         }
@@ -313,5 +288,4 @@ void setup() {
     ESP.deepSleep(0);
   }
 }
-
 void loop() {}

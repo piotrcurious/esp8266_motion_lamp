@@ -8,6 +8,7 @@ LowPowerMock LowPower;
 ESPMock ESP;
 EEPROMMock EEPROM;
 ESP8266WebServer server(80);
+WiFiMock WiFi;
 
 static uint8_t pin_modes[256];
 static int pin_values[256];
