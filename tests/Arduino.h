@@ -38,6 +38,7 @@ void digitalWrite(uint8_t pin, uint8_t val);
 int digitalRead(uint8_t pin);
 int analogRead(uint8_t pin);
 void analogWrite(uint8_t pin, int val);
+void analogWriteRange(int range);
 unsigned long millis();
 void delay(unsigned long ms);
 void yield();
