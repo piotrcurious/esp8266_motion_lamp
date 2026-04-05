@@ -100,7 +100,7 @@ String getVisual(int envIdx) {
       else if (b < 192) ch = "▓";
       else ch = "█";
     }
-    visual += "<span id='v" + String(envIdx) + "_" + String(j) + "'>" + ch + "</span>";
+    visual += "<span id='v" + String(envIdx) + "_" + String(j) + "' onclick='selStep(" + String(envIdx) + "," + String(j) + ");event.stopPropagation();'>" + ch + "</span>";
   }
   return visual;
 }
@@ -116,27 +116,31 @@ void handleRoot() {
   response += "input[type=submit],button{background:#0aa;color:#fff;cursor:pointer;font-weight:bold;margin-top:10px; border:none; padding:10px;}";
   response += "input[type=submit]:hover,button:hover{background:#0ff;}";
   response += ".visual{color:#ff0;letter-spacing:-1px;font-size:12px;display:block;margin:5px 0;word-break:break-all;cursor:crosshair;}";
+  response += ".visual span{padding:0 1px;}";
   response += ".visual span.sel{background:#f00;color:#fff;}";
   response += "h1{color:#0ff;text-shadow:0 0 10px #0aa;}";
   response += "h3{color:#f0f;border-bottom:1px solid #f0f;}";
   response += ".dash{border:2px solid #0ff;padding:10px;margin-bottom:20px;background:#001;}";
   response += ".kbd-help{color:#888;font-size:0.8em;margin-bottom:10px;}";
-  response += "</style></head><body><h1>> MOTION_LAMP_OS v1.5</h1>";
+  response += "</style></head><body><h1>> MOTION_LAMP_OS v1.6</h1>";
+
   response += "<div class='dash'><h3>[SYSTEM_DASHBOARD]</h3>";
   response += "BATTERY: " + String(v) + "V<br>UPTIME: " + String((unsigned long)(millis()/1000)) + "s</div>";
-  response += "<div class='kbd-help'>[KEYBOARD_EDIT_MODE]: Click a Brightness Profile. Use ARROWS to navigate & change brightness.</div>";
+  response += "<div class='kbd-help'>[EDIT]: Click a Profile to focus. Use ARROWS to move/change brightness. Click individual step to select.</div>";
+
   response += "<form method='post' action='/config' id='cfgForm'>";
   response += "<h3>[WIFI_AND_CALIBRATION]</h3>";
   response += "SSID: <input type='text' name='ssid' value='" + String(cfg.ssid) + "' style='width:200px'> ";
   response += "PASS: <input type='text' name='pass' value='" + String(cfg.pass) + "' style='width:200px'> ";
   response += "V_MULT: <input type='text' name='vmult' value='" + String(cfg.v_multiplier) + "' style='width:100px'><br><br>";
+
   response += "<table><tr><th>Env</th><th>Min V</th><th>Max V</th><th>Loop Pt</th><th>Brightness Profile</th><th>Test</th></tr>";
   for (int i = 0; i < NUM_ENVELOPES; i++) {
     response += "<tr><td>" + String(i) + "</td>";
     response += "<td><input type='text' name='vmin" + String(i) + "' value='" + String(cfg.v_ranges[i][0]) + "'></td>";
     response += "<td><input type='text' name='vmax" + String(i) + "' value='" + String(cfg.v_ranges[i][1]) + "'></td>";
     response += "<td><input type='text' name='lp" + String(i) + "' value='" + String(cfg.loop_points[i]) + "'></td>";
-    response += "<td><div class='visual' onclick='focusEnv(" + String(i) + ")' id='visCont" + String(i) + "'>" + getVisual(i) + "</div></td>";
+    response += "<td><div class='visual' onclick='selStep(" + String(i) + ",0)' id='visCont" + String(i) + "'>" + getVisual(i) + "</div></td>";
     response += "<td><button type='button' onclick=\"location.href='/test?env=" + String(i) + "'\">RUN</button></td></tr>";
   }
   response += "</table>";
@@ -149,9 +153,10 @@ void handleRoot() {
     response += "</textarea>";
   }
   response += "<br><input type='submit' value='COMMIT_CHANGES_TO_ROM'></form>";
+
   response += "<script>";
   response += "let curEnv=-1, curStep=0;";
-  response += "function focusEnv(e){ if(curEnv!=-1) clearSel(); curEnv=e; curStep=0; updateSel(); }";
+  response += "function selStep(e,s){ if(curEnv!=-1) clearSel(); curEnv=e; curStep=s; updateSel(); }";
   response += "function clearSel(){ let el=document.getElementById('v'+curEnv+'_'+curStep); if(el) el.classList.remove('sel'); }";
   response += "function updateSel(){ let el=document.getElementById('v'+curEnv+'_'+curStep); if(el) el.classList.add('sel'); }";
   response += "document.addEventListener('keydown', (e)=>{ if(curEnv==-1) return; if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) e.preventDefault();";
